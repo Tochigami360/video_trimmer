@@ -68,6 +68,12 @@ class FixedTrimViewer extends StatefulWidget {
 
   final VoidCallback onThumbnailLoadingComplete;
 
+  /// Initial start time in milliseconds for the trim selection.
+  final double? initialStartTime;
+
+  /// Initial end time in milliseconds for the trim selection.
+  final double? initialEndTime;
+
   /// Widget for displaying the video trimmer.
   ///
   /// This has frame wise preview of the video with a
@@ -127,6 +133,8 @@ class FixedTrimViewer extends StatefulWidget {
     this.onChangePlaybackState,
     this.editorProperties = const TrimEditorProperties(),
     this.areaProperties = const FixedTrimAreaProperties(),
+    this.initialStartTime,
+    this.initialEndTime,
   });
 
   @override
@@ -197,7 +205,6 @@ class _FixedTrimViewerState extends State<FixedTrimViewer>
       if (trimmerActualWidth == null) return;
       _thumbnailViewerW = trimmerActualWidth;
       _initializeVideoController();
-      videoPlayerController.seekTo(const Duration(milliseconds: 0));
       _numberOfThumbnails = trimmerActualWidth ~/ _thumbnailViewerH;
       log('numberOfThumbnails: $_numberOfThumbnails');
       log('thumbnailViewerW: $_thumbnailViewerW');
@@ -232,10 +239,52 @@ class _FixedTrimViewerState extends State<FixedTrimViewer>
             ? _videoDuration.toDouble() * fraction!
             : _videoDuration.toDouble();
 
-        widget.onChangeEnd!(_videoEndPos);
+        // Apply initial start time if provided (values should be in milliseconds)
+        if (widget.initialStartTime != null && widget.initialStartTime! >= 0) {
+          // Auto-detect if value is in seconds (if value is much smaller than video duration)
+          // and convert to milliseconds
+          double initialStart = widget.initialStartTime!;
+          if (initialStart < _videoDuration / 1000) {
+            // Value appears to be in seconds, convert to milliseconds
+            initialStart = initialStart * 1000;
+            log('Converting initialStartTime from seconds to milliseconds: $initialStart');
+          }
+          if (initialStart < _videoDuration) {
+            _videoStartPos = initialStart;
+            _startFraction = _videoStartPos / _videoDuration;
+            _startPos = Offset(_thumbnailViewerW * _startFraction, 0);
+            log('Initial start applied: $_videoStartPos ms, fraction: $_startFraction, pos: $_startPos');
+            widget.onChangeStart?.call(_videoStartPos);
+          }
+        }
 
+        // Apply initial end time if provided (values should be in milliseconds)
+        if (widget.initialEndTime != null && widget.initialEndTime! > 0) {
+          // Auto-detect if value is in seconds and convert to milliseconds
+          double initialEnd = widget.initialEndTime!;
+          if (initialEnd < _videoDuration / 1000) {
+            // Value appears to be in seconds, convert to milliseconds
+            initialEnd = initialEnd * 1000;
+            log('Converting initialEndTime from seconds to milliseconds: $initialEnd');
+          }
+          if (initialEnd > _videoStartPos && initialEnd <= _videoDuration) {
+            _videoEndPos = initialEnd;
+            // Ensure we don't exceed max video length
+            if (fraction != null) {
+              final maxDuration = _videoDuration.toDouble() * fraction!;
+              if (_videoEndPos - _videoStartPos > maxDuration) {
+                _videoEndPos = _videoStartPos + maxDuration;
+              }
+            }
+            log('Initial end applied: $_videoEndPos ms');
+          }
+        }
+
+        widget.onChangeEnd?.call(_videoEndPos);
+
+        _endFraction = _videoEndPos / _videoDuration;
         _endPos = Offset(
-          maxLengthPixels != null ? maxLengthPixels! : _thumbnailViewerW,
+          _thumbnailViewerW * _endFraction,
           _thumbnailViewerH,
         );
 
@@ -256,6 +305,10 @@ class _FixedTrimViewerState extends State<FixedTrimViewer>
               _animationController!.stop();
             }
           });
+
+        // Seek to initial start position
+        videoPlayerController
+            .seekTo(Duration(milliseconds: _videoStartPos.toInt()));
       });
     });
   }

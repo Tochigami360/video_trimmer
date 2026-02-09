@@ -75,6 +75,12 @@ class ScrollableTrimViewer extends StatefulWidget {
 
   final VoidCallback onThumbnailLoadingComplete;
 
+  /// Initial start time in milliseconds for the trim selection.
+  final double? initialStartTime;
+
+  /// Initial end time in milliseconds for the trim selection.
+  final double? initialEndTime;
+
   /// Widget for displaying the video trimmer.
   ///
   /// This has frame wise preview of the video with a
@@ -134,6 +140,8 @@ class ScrollableTrimViewer extends StatefulWidget {
     this.paddingFraction = 0.2,
     this.editorProperties = const TrimEditorProperties(),
     this.areaProperties = const TrimAreaProperties(),
+    this.initialStartTime,
+    this.initialEndTime,
   });
 
   @override
@@ -296,7 +304,6 @@ class _ScrollableTrimViewerState extends State<ScrollableTrimViewer>
       _thumbnailViewerW = trimmerActualWidth;
       _initializeVideoController();
       // The video has been initialized, now we can load stuff
-      videoPlayerController.seekTo(const Duration(milliseconds: 0));
       setState(() {
         final totalDuration = videoPlayerController.value.duration;
         log('Total Video Length: $totalDuration');
@@ -364,8 +371,66 @@ class _ScrollableTrimViewerState extends State<ScrollableTrimViewer>
 
         _videoEndPos =
             preciseAreaDuration.inMilliseconds.toDouble() * trimmerFraction;
+
+        // Apply initial start time if provided (values should be in milliseconds)
+        if (widget.initialStartTime != null && widget.initialStartTime! >= 0) {
+          // Auto-detect if value is in seconds (if value is much smaller than video duration)
+          // and convert to milliseconds
+          double initialStart = widget.initialStartTime!;
+          if (initialStart < _videoDuration / 1000) {
+            // Value appears to be in seconds, convert to milliseconds
+            initialStart = initialStart * 1000;
+            log('Converting initialStartTime from seconds to milliseconds: $initialStart');
+          }
+          if (initialStart < _videoDuration) {
+            _videoStartPos = initialStart;
+            // Calculate the position within the visible trimmer area
+            _startFraction = _videoStartPos / _trimmerAreaDuration;
+            if (_startFraction > 1.0) {
+              // Need to scroll - calculate scroll position
+              final scrollFraction =
+                  (_videoStartPos - _trimmerAreaDuration) / _remainingDuration;
+              currentScrollValue = scrollFraction * totalVideoLengthInPixels;
+              _startFraction = 0;
+            }
+            _startPos = Offset(_thumbnailViewerW * _startFraction, 0);
+            log('Initial start applied: $_videoStartPos ms, fraction: $_startFraction, pos: $_startPos');
+            widget.onChangeStart?.call(_videoStartPos);
+          }
+        }
+
+        // Apply initial end time if provided (values should be in milliseconds)
+        if (widget.initialEndTime != null && widget.initialEndTime! > 0) {
+          // Auto-detect if value is in seconds and convert to milliseconds
+          double initialEnd = widget.initialEndTime!;
+          if (initialEnd < _videoDuration / 1000) {
+            // Value appears to be in seconds, convert to milliseconds
+            initialEnd = initialEnd * 1000;
+            log('Converting initialEndTime from seconds to milliseconds: $initialEnd');
+          }
+          if (initialEnd > _videoStartPos && initialEnd <= _videoDuration) {
+            _videoEndPos = initialEnd;
+            // Ensure we don't exceed max video length
+            final maxDuration = maxVideoLength.inMilliseconds.toDouble();
+            if (_videoEndPos - _videoStartPos > maxDuration) {
+              _videoEndPos = _videoStartPos + maxDuration;
+            }
+            log('Initial end applied: $_videoEndPos ms');
+          }
+        }
+
+        // Calculate end position
+        _endFraction = (_videoEndPos -
+                _videoStartPos +
+                (_trimmerAreaDuration * _startFraction)) /
+            _trimmerAreaDuration;
+        _endPos = Offset(
+          _thumbnailViewerW * _endFraction,
+          _thumbnailViewerH,
+        );
+
         log('Video End Pos: $_videoEndPos ms');
-        widget.onChangeEnd!(_videoEndPos);
+        widget.onChangeEnd?.call(_videoEndPos);
         log('Video Selected Duration: ${_videoEndPos - _videoStartPos}');
 
         // Defining the tween points
@@ -385,6 +450,13 @@ class _ScrollableTrimViewerState extends State<ScrollableTrimViewer>
               _animationController!.stop();
             }
           });
+
+        // Scroll to initial position if needed and seek video
+        if (currentScrollValue > 0) {
+          _scrollController.jumpTo(currentScrollValue);
+        }
+        videoPlayerController
+            .seekTo(Duration(milliseconds: _videoStartPos.toInt()));
       });
     });
   }
